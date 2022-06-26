@@ -1,5 +1,18 @@
-DELIMITER $$
-CREATE DEFINER=`root`@`localhost` PROCEDURE `up_hk_history_data`(
+use master_all;
+DROP table IF EXISTS process_data_log ;
+CREATE TABLE `process_data_log` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `bdate` date NOT NULL,
+  `fnname` varchar(50) NOT NULL,
+  `rows_affected` int(11) DEFAULT NULL,
+  `starttime` datetime DEFAULT NULL,
+  `endtime` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=192 DEFAULT CHARSET=utf8mb4;
+
+DELIMITER //
+DROP PROCEDURE IF EXISTS up_hk_history_data //
+create PROCEDURE up_hk_history_data(
 	IN _keep_days int,IN _batch_size int
 )
 MainLabel:BEGIN
@@ -11,9 +24,6 @@ MainLabel:BEGIN
     declare _id int;
     declare _last_id int;
     SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-    if time(CURRENT_TIMESTAMP) not between time('02:00:00') and time('06:00:00') then
-        leave MainLabel;
-    end if;
     set _batch_size=ifnull(_batch_size,50000);
     set _end_date=DATE_SUB(CURDATE(), interval IFNULL(_keep_days,100) day);
     select max(bdate) into _start from process_data_log where bdate <=_end_date and fnname='delete cnf_balance_log';
@@ -23,7 +33,7 @@ MainLabel:BEGIN
           leave MainLabel;
 		end if;
     end if;    
-    set _start=DATE_add(_start, interval 1 day); 
+    set _start=DATE_add(_start, interval 1 day); --  clean one day for each run
     select _start,_end_date,_batch_size;
     if _start>_end_date then
       leave MainLabel;
@@ -67,5 +77,18 @@ MainLabel:BEGIN
    end while;  
    update process_data_log set endtime=SYSDATE() where id=_id;     
        
-END$$
+END //
 DELIMITER ;
+drop EVENT IF EXISTS archive_data_daily;
+DELIMITER //
+CREATE EVENT archive_data_daily
+ON SCHEDULE EVERY 5 minute STARTS (TIMESTAMP(CURRENT_DATE) + INTERVAL 120 minute)
+ends (TIMESTAMP(CURRENT_DATE) + INTERVAL 360 minute)
+ON COMPLETION PRESERVE
+DO begin
+	SET sql_log_bin=off;
+	call up_hk_history_data(null,null);
+	SET sql_log_bin=on;
+ end //
+ DELIMITER ;
+ 
